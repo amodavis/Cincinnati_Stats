@@ -1,0 +1,429 @@
+---
+title: "DSC520 Final Project"
+author: "Amie Davis"
+date: "11 November, 2019"
+output: 
+  word_document: default
+---
+# Data Source:
+PDI (Police Data Initiative) Crime Incidents, City of Cincinnati (PDI__Police_Data_Initiative__Crime_Incidents.csv)
+
+# 1. Load Libraries
+
+```{r libs, message=FALSE}
+#install.packages("lubridate")
+
+library(readr)
+library(gdata)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+library(ggmap)
+library(caTools)
+library(class)
+```
+
+# 2. Load the Data
+
+```{r load, include=TRUE}
+ci_data <- read_csv("PDI__Police_Data_Initiative__Crime_Incidents_Revised2.csv",
+  col_types = cols(
+  .default = col_character(),
+  UCR = col_double(),
+  BEAT = col_character(),
+  RPT_AREA = col_character(),
+  LONGITUDE_X = col_double(),
+  LATITUDE_X = col_double(),
+  TOTALNUMBERVICTIMS = col_double(),
+  TOTALSUSPECTS = col_double(),
+  ZIP = col_character()
+) )
+```
+
+# 3. Clean the Data
+
+## a) Limit to records with Cincinnati zip codes
+
+```{r cin}
+cin_ci_data <- subset(ci_data, ZIP >= 45211 & ZIP <= 45280, c(INCIDENT_NO, ZIP, OFFENSE, CPD_NEIGHBORHOOD, SUSPECT_AGE, SUSPECT_RACE, SUSPECT_GENDER, CLSD, DAYOFWEEK, DATE_FROM, LATITUDE_X, LONGITUDE_X))
+```
+
+## b) Limit to records with geodetic (lat/long) coordinates
+
+```{r geo}
+cin_geo_data <- subset(cin_ci_data, !is.na(LATITUDE_X), c(INCIDENT_NO, ZIP, OFFENSE, CPD_NEIGHBORHOOD, SUSPECT_AGE, SUSPECT_RACE, SUSPECT_GENDER, CLSD, DAYOFWEEK, DATE_FROM, LATITUDE_X, LONGITUDE_X))
+```
+
+## c) Exclude records missing critical data elements
+
+```{r cln_data}
+cln_data <- subset(cin_geo_data, !is.na(DATE_FROM), c(INCIDENT_NO, ZIP, OFFENSE, CPD_NEIGHBORHOOD, SUSPECT_AGE, SUSPECT_RACE, SUSPECT_GENDER, CLSD, DAYOFWEEK, DATE_FROM, LATITUDE_X, LONGITUDE_X))
+```
+
+## d) Convert categorical variables to factors
+```{r convert}
+cln_data$SUSPECT_AGE <- factor(cln_data$SUSPECT_AGE)
+cln_data$SUSPECT_RACE <- factor(cln_data$SUSPECT_RACE)
+cln_data$SUSPECT_GENDER <- factor(cln_data$SUSPECT_GENDER)
+cln_data$DAYOFWEEK <- factor(cln_data$DAYOFWEEK, levels = c("SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"))
+```
+\newline\
+Drop unused factors.
+
+```{r drop}
+x <- drop.levels(cln_data)
+```
+
+# 4. Review the Data
+
+## a) Review Structure
+```{r str, include=TRUE}
+str(cln_data)
+#head(cln_data)
+summary(cln_data)
+```
+\newline\
+There are more unknown or NA values for suspect's age, race, and gender than there are known values, so I will remove those variables from the dataset.
+
+## b) Review Distributions
+
+```{r zip_hist}
+ggplot(cln_data, aes(as.factor(x=ZIP))) +
+    geom_bar(fill="dark green") +
+    labs(x="Zip Codes", y="Incident Records", title="Records By Zip Code") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r off_hist}
+ggplot(cln_data, aes(as.factor(x=OFFENSE))) +
+    geom_bar(fill="dark green") +
+    labs(x="Offense", y="Incident Records", title="Records By Offense") +
+    theme(axis.text.x = element_blank())
+```
+
+That spike in the chart is for "Theft".  I will look into this further later.
+\newline\
+```{r hood_hist}
+ggplot(cln_data, aes(x=as.factor(CPD_NEIGHBORHOOD))) +
+    geom_bar(fill="dark green") +
+    labs(x="Neighborhood", y="Incident Records", title="Records By Neighborhood") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+There is another spike here in the "Westwood" neighborhood.  I will revisit this later.
+\newline\
+```{r clsd_hist}
+ggplot(cln_data, aes(x=as.factor(CLSD))) +
+    geom_bar(fill="dark green") +
+    labs(x="Closure Status", y="Incident Records", title="Records By Closure Status") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The large number of incidents designated "EARLY CLOSED" is interesting, especially in light of recent news headlines.  I have contacted the dataset owner for more information as to what is meant by "Early Closure."
+\newline\
+```{r day_hist}
+ggplot(cln_data, aes(x=DAYOFWEEK)) +
+    geom_bar(fill="dark green") +
+    labs(x="Day of the Week", y="Incident Records", title="Records By Day of Week") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The distribution by the Day of the Week does not vary much, so I will remove that variable from the dataset.
+
+# 5. Derived Data
+
+```{r date}
+# Convert DATE_FROM field to a datetime stamp
+date_data <- cln_data %>% mutate(DATE_FROM = mdy_hm(DATE_FROM))
+
+# Split date field into separate columns
+der_date_data <- date_data %>% mutate (YEAR = year(DATE_FROM), 
+                                MONTH = month(DATE_FROM), 
+                                DAY = day(DATE_FROM),
+                                HOUR = hour(DATE_FROM),
+                                MINUTE = minute(DATE_FROM))
+
+# Add Comparison/Fiscal year field (Oct-Sep)
+der_date_data$COMP_YEAR <- ifelse(der_date_data$MONTH >= 10, der_date_data$YEAR+1, der_date_data$YEAR)
+der_date_data$COMP_YEAR <- factor(der_date_data$COMP_YEAR)
+
+# Order months for Comparison/Fiscal Year (Oct-Sep)
+der_date_data$MONTH <- factor(der_date_data$MONTH, levels = c("10","11","12","1","2","3","4","5","6","7","8","9"))
+```
+
+# 6. Explore Data
+
+## a) Filter to use only two years worth of data.
+
+Using 1Oct2018-30Sep2019 for current year and 1Oct2017-30Sep2018 for last year.
+\newline\
+```{r}
+recent_data <- subset(der_date_data, (COMP_YEAR == 2018 |
+                                     COMP_YEAR == 2019),
+ c(INCIDENT_NO, ZIP, OFFENSE, CPD_NEIGHBORHOOD, CLSD, DATE_FROM, LATITUDE_X, LONGITUDE_X, MONTH, HOUR, COMP_YEAR))
+```
+
+## b) Plot incidents by month.  Compare to previous year.
+
+```{r mon_comp}
+month_df <- recent_data %>% group_by(MONTH, COMP_YEAR) %>% tally()
+
+ggplot(month_df, aes(x=MONTH, y=n, color=COMP_YEAR, group=COMP_YEAR)) +
+    geom_line() +
+    geom_point() +
+    labs(x="Month", y="Incident Records", title="Records By Month") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+\newline\
+As you can see, incident reporting is down in the winter months.  The least reported is February in both years, while incident reporting is up in the summer months.  The greatest is in July both years.  You can see that, although this year dropped quite a bit in February, incidents increased this past summer.  Reported incidents increased this year in all but three months: October, February, and July.  This year's trend is similar to the previous year, but has increased overall.
+
+## c) Plot incidents by time of day.  Compare to previous year.
+```{r hr_comp}
+hr_df <- recent_data %>% group_by(HOUR, COMP_YEAR) %>% tally()
+
+ggplot(hr_df, aes(x=HOUR, y=n, color=COMP_YEAR, group=COMP_YEAR)) +
+    geom_line() +
+    geom_point() +
+    labs(x="Hour", y="Incident Records", title="Records By Hour") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+\newline\
+The plot indicates incident reporting peaks at midnight and drops dramatically afterward.  Incident reporting increases during the daytime until noon.  Both years show consistent data.
+
+## d) Plot incidents by offense.  Compare to previous year.
+
+```{r off_comp}
+off_df <- recent_data %>% group_by(OFFENSE, COMP_YEAR) %>% tally()
+
+ggplot(off_df, aes(x=OFFENSE, y=n, color=COMP_YEAR, group=COMP_YEAR)) +
+    geom_line() +
+    geom_point() +
+    labs(x="Offense", y="Incident Records", title="Records By Offense") +
+    theme(axis.text.x = element_blank())
+```
+\newline\
+Thefts are reported far more than other offenses.  Compared to last year, the number of offenses by type is consistent.
+
+## e) Plot incidents by closure status.  Compare to previous year.
+
+```{r clsd_comp}
+clsd_df <- recent_data %>% group_by(CLSD, COMP_YEAR) %>% tally()
+
+ggplot(clsd_df, aes(x=CLSD, y=n, color=COMP_YEAR, group=COMP_YEAR)) +
+    geom_line() +
+    geom_point() +
+    labs(x="Offense", y="Incident Records", title="Records By Closure Status") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+\newline\
+Note the large number of incidents closed with "Early Closed" status.  I have contacted the data steward for clarification between "Closed" and "Early Closed" statuses.
+
+## f) Look at offenses by neighborhood
+```{r}
+hood_df <- recent_data %>% group_by(CPD_NEIGHBORHOOD, OFFENSE)%>% tally()
+
+ggplot(hood_df, aes(x=CPD_NEIGHBORHOOD, y=n)) +
+  geom_point(position="jitter") +
+    labs(x="Neighborhood", y="Offenses", title="Offenses By Neighborhood") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+\newline\
+One type of offense is reported most frequently in a particular neighborhood.  This is worth further investigation.
+
+```{r}
+west_df <- hood_df %>% filter(CPD_NEIGHBORHOOD == "WESTWOOD")
+west_df[order(west_df$n, decreasing = TRUE),]
+```
+There is clearly a problem with theft in Westwood.
+
+# 7. Look for correlarion
+
+## a) Create data frame with numeric counts
+Since the orginal dataset contained only categorical variables, I need to derive counts to perform any correlation analysis.
+\newline\
+```{r, warning=FALSE}
+
+# Count thefts by Neighborhood
+inc_df <- recent_data %>% group_by(MONTH, COMP_YEAR, CPD_NEIGHBORHOOD, OFFENSE) %>% tally()
+theft_df <- inc_df %>% filter(OFFENSE == "THEFT")
+names(theft_df)[5]<-"THEFT_CNT"
+
+# Count arrests by Neighborhood
+clsd_df <- recent_data %>% group_by(MONTH, COMP_YEAR, CPD_NEIGHBORHOOD, CLSD) %>% tally()
+arr_df <- clsd_df %>% filter((CLSD == "F--CLEARED BY ARREST - ADULT" | CLSD == "G--CLEARED BY ARREST - JUVENILE"))
+names(arr_df)[5]<-"ARREST_CNT"
+
+# Count closed cases by Neighborhood
+clsd_df <- clsd_df %>% filter((CLSD == "J--CLOSED" | CLSD == "Z--EARLY CLOSED"))
+names(clsd_df)[5]<-"CLOSED_CNT"
+
+# Join datasets
+tally_df <- merge(theft_df, arr_df,by=c("MONTH", "COMP_YEAR", "CPD_NEIGHBORHOOD"))
+tally_df <- merge(tally_df, clsd_df,by=c("MONTH", "COMP_YEAR", "CPD_NEIGHBORHOOD"))
+summary(tally_df)
+```
+
+## b) Look for relationship between the number of thefts and the number of arrests and closed cases
+
+```{r}
+ggplot(tally_df, aes(x=THEFT_CNT, y=ARREST_CNT)) +
+  geom_point(position="jitter") +
+    labs(x="Number Thefts Reported", y="Number of Arrests", title="Thefts By Arrests Per Month") +
+    geom_smooth(method="lm") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(tally_df, aes(x=THEFT_CNT, y=CLOSED_CNT)) +
+  geom_point(position="jitter") +
+    labs(x="Number Thefts Reported", y="Number of Closed Cases", title="Closures By Thefts Per Month") +
+    geom_smooth(method="lm") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## c) Check for normality
+
+```{r}
+ggplot(tally_df, aes(THEFT_CNT)) +
+    geom_bar(fill="dark green") +
+    labs(x="Thefts Per Month", title="Theft Histogram") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(tally_df, aes(ARREST_CNT)) +
+    geom_bar(fill="dark green") +
+    labs(x="Arrests Per Month", title="Arrest Histogram") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggplot(tally_df, aes(CLOSED_CNT)) +
+    geom_bar(fill="dark green") +
+    labs(x="Closures Per Month", title="Closure Histogram") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## d) Test for correlation
+\newline\
+Since the distributions are skewed, I will use kendall's tau instead of Person's r to determine correlation.
+\newline\
+```{r}
+cor.test(tally_df$THEFT_CNT, tally_df$ARREST_CNT, method="kendall")
+cor.test(tally_df$THEFT_CNT, tally_df$CLOSED_CNT, method="kendall")
+```
+
+Both show a significant positive relationship.  This confirms what is visually displayed in the graphs.
+
+## e) Build Linear Model
+
+Given the number of thefts reported by neighborhood, we can predict the number of arrests and closures using linear models.
+
+```{r}
+lr_mod1 <- lm(ARREST_CNT ~ THEFT_CNT, tally_df)
+summary(lr_mod1)
+lr_mod2 <- lm(CLOSED_CNT ~ THEFT_CNT, tally_df)
+summary(lr_mod2)
+```
+\newline
+Using these linear models, we can predict the number of arrests and closures based on the numbers of thefts reported.
+
+# 8. Model Data - kNN
+
+## a) Plot crime incidents by offense against location data.
+\newline
+I will expand the dataset to better train the model to include data from 2011 forward.  Also, I will only review records where NEIGHBORHOOD and OFFENSE have values.  Since there are 65 different categories, I will limit the offenses in the model to the top 6 most frequently reported offenses.
+\newline
+```{r}
+model_data <- subset(recent_data, !is.na(OFFENSE) & !is.na(CPD_NEIGHBORHOOD),
+ c(OFFENSE, CPD_NEIGHBORHOOD, LATITUDE_X, LONGITUDE_X))
+new_mod_data <- subset(model_data, OFFENSE=="THEFT" | OFFENSE=="CRIMINAL DAMAGING/ENDANGERING" | OFFENSE=="ASSAULT" | OFFENSE=="DOMESTIC VIOLENCE" | OFFENSE=="BURGLARY" | OFFENSE=="AGGRAVATED ROBBERY" | OFFENSE=="AGGRAVATED MENACING", c(OFFENSE, CPD_NEIGHBORHOOD, LATITUDE_X, LONGITUDE_X))
+```
+\newline
+Using ggmap to use Google maps to display geodetic information.
+The API key is passed, but is hidden from Markdown.
+\newline
+```{r goog, include=FALSE}
+ggmap::register_google(key="AIzaSyC_xHA2f2uNcL0LdfRxlIH0dWTSWu88o3E")
+```
+
+## b) Plot crime incidents by top 6 reported offenses against location data.
+
+```{r off2_plot, message=FALSE}
+# Use Cincinnati coordinates as center
+cin_map1 <- ggmap(get_googlemap(
+                  center = c(lon = -84.512016, lat = 39.103119),
+                  zoom = 11, scale = 2,
+                  maptype = "terrain",
+                  color="color"))
+cin_map1 + 
+  geom_point(data = new_mod_data, 
+             aes(x=LONGITUDE_X, y=LATITUDE_X, color = OFFENSE)) +
+  labs(x="Longitude", y="Latitude", title="Incidents By Offense") +
+  theme(legend.title = element_blank())
+```
+
+## c) Split the data set, randomly into test and train sets.
+```{r split2}
+split_off_set <- sample.split(new_mod_data$OFFENSE,SplitRatio=0.8)
+train_off_set <- subset(new_mod_data, split_off_set=="TRUE")
+test_off_set <- subset(new_mod_data, split_off_set=="FALSE")
+```
+
+### Separate Labels
+Before running the data through a nearest neighbor model, we need to separate the labels from the data.
+
+```{r}
+train_off_labels <- train_off_set[,1, drop=TRUE]
+test_off_labels <- test_off_set[,1, drop=TRUE]
+train_off_data <- train_off_set[,3:4]
+test_off_data <- test_off_set[,3:4]
+```
+
+## d) Build kNN models with training dataset
+Now, we can build the models with the training sets, using a variety of k values.
+```{r}
+knn_off.3<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=3)
+knn_off.5<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=5)
+knn_off.10<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=10)
+knn_off.15<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=15)
+knn_off.20<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=20)
+knn_off.25<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=25)
+knn_off.35<- knn(train = train_off_data, test = test_off_data, cl = train_off_labels, k=35)
+```
+
+## e) Test kNN model with test dataset
+  
+```{r accuracy2}
+# Accuracy for offense model
+ACC_off.3 <- 100 * sum(test_off_labels == knn_off.3)/NROW(test_off_labels)
+ACC_off.5 <- 100 * sum(test_off_labels == knn_off.5)/NROW(test_off_labels)
+ACC_off.10 <- 100 * sum(test_off_labels == knn_off.10)/NROW(test_off_labels)
+ACC_off.15 <- 100 * sum(test_off_labels == knn_off.15)/NROW(test_off_labels)
+ACC_off.20 <- 100 * sum(test_off_labels == knn_off.20)/NROW(test_off_labels)
+ACC_off.25 <- 100 * sum(test_off_labels == knn_off.25)/NROW(test_off_labels)
+ACC_off.35 <- 100 * sum(test_off_labels == knn_off.35)/NROW(test_off_labels)
+```
+
+```{r accdf2}
+# Add accuracy values to a new data frame
+k <- c(3,5,10,15,20,25,35)
+ACC <- c(ACC_off.3, ACC_off.5, ACC_off.10, ACC_off.15, ACC_off.20, ACC_off.25, ACC_off.35)
+ACC_df <- data.frame(k, ACC, stringsAsFactors=FALSE)
+```
+
+### Plot accuracy values
+
+```{r}
+# Convert data types for data frame
+ACC_df$k <- as.numeric(ACC_df$k)
+ACC_df$ACC <- as.numeric(ACC_df$ACC)
+
+ggplot(ACC_df, aes(x=k, y=ACC, col="light orange")) +
+  geom_point() +
+  labs(title="kNN Model Accuracy Values", y="Accuracy") +
+    theme(legend.position = "none")
+```
+\newline\
+The best I will get with this model is around 43% accuracy with k=25 clusters.
+
+
+# References
+https://www.littlemissdata.com/blog/maps?format=amp
+https://www.latlong.net
+D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf
