@@ -339,7 +339,7 @@ Using ggmap to use Google maps to display geodetic information.
 The API key is passed, but is hidden from Markdown.
 \newline
 ```{r goog, include=FALSE}
-ggmap::register_google(key="AIzaSyC_xHA2f2uNcL0LdfRxlIH0dWTSWu88o3E")
+ggmap::register_google(key="")
 ```
 
 ## b) Plot crime incidents by top 6 reported offenses against location data.
