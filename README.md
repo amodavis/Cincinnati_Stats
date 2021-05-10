@@ -7,5 +7,6 @@ Analyze Cincinnati crime statistics to identify location and times of concern.
 - R
 
 ## Files
-- Cincinnati_Crime_Statistic_Project.docx
-- Cincinnati_Crime_Statistics_Analysis.Rmd - R Markdown file
+- Cincinnati_Crime_Statistic_Paper.pdf - Read for some background and methodology
+- Cincinnati_Crime_Statistics_Analysis.Rmd - R Markdown file - Statistical Analysis
+- Cincinnati_Crime_Statistics_Markdown Output.pdf - PDF of Statisticala Analysis
